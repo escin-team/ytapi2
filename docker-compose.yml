@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────
+# YouTube Music Streaming API — Docker Compose
+#
+# Quick start:
+#   cp .env.example .env   # edit your keys
+#   docker-compose up -d
+#   open http://localhost/admin
+#
+# Services:
+#   nginx      — reverse proxy  :80
+#   python-api — FastAPI app    :8000 (internal)
+#   bun-api    — healthz only   :8080 (internal)
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Nginx reverse proxy ──────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      python-api:
+        condition: service_healthy
+      bun-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Python FastAPI (main app) ────────────────────────────────
+  python-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_PORT: "8000"
+    volumes:
+      - audio_cache:/tmp/youtube_audio
+      - ./oauth.json:/app/oauth.json:rw   # persists OAuth token
+      - ./admin.db:/app/admin.db:rw       # persists admin DB
+      - ./.env:/app/.env:rw               # persists settings edits from dashboard
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  # ── Bun metadata API ─────────────────────────────────────────
+  bun-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.bun
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/healthz"]
+      interval: 20s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+volumes:
+  audio_cache:
