@@ -14,6 +14,7 @@ from youtube_search.api.v1.search_prefetch import router as prefetch_router
 from youtube_search.api.v1 import oauth
 from youtube_search.admin import router as admin_router
 from youtube_search.admin import db as admin_db
+from youtube_search.mcp.router import router as mcp_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +43,7 @@ app.add_middleware(
 )
 
 
-# ── Whitelist + analytics middleware ─────────────────────────────────────────
+# ── Whitelist + analytics middleware ──────────────────────────────────────────
 
 _API_PREFIX = "/api/"
 
@@ -58,16 +59,15 @@ async def whitelist_and_track(request: Request, call_next):
                 request.headers.get("origin", "")
                 or request.headers.get("referer", "")
             )
-            # Normalise: strip scheme and path, keep host only
             import urllib.parse
             raw = origin_header.strip().rstrip("/")
             try:
                 parsed = urllib.parse.urlparse(raw)
-                origin_host = parsed.netloc or parsed.path  # fallback for scheme-less
+                origin_host = parsed.netloc or parsed.path
             except Exception:
                 origin_host = raw
 
-            origin_host = origin_host.lower().split(":")[0]  # strip port
+            origin_host = origin_host.lower().split(":")[0]
 
             if origin_host and origin_host not in enabled:
                 response = JSONResponse(
@@ -90,7 +90,6 @@ async def whitelist_and_track(request: Request, call_next):
     response = await call_next(request)
     elapsed = int((time.monotonic() - start) * 1000)
 
-    # Track only API and OAuth calls (skip admin/static/health noise)
     path = request.url.path
     if path.startswith(_API_PREFIX) or path.startswith("/oauth/"):
         origin = (
@@ -112,7 +111,7 @@ async def whitelist_and_track(request: Request, call_next):
                 elapsed,
             )
         except Exception:
-            pass  # never let analytics break the response
+            pass
 
     return response
 
@@ -138,6 +137,7 @@ async def root():
         "admin": "/admin",
         "health": "/health",
         "oauth_setup": "/oauth/device/setup",
+        "mcp": "/mcp/health",
     }
 
 app.include_router(search.router)
@@ -147,8 +147,9 @@ app.include_router(playlist.router)
 app.include_router(docs.router)
 app.include_router(oauth.router)
 app.include_router(admin_router.router)
+app.include_router(mcp_router)
 
-# ── Local file storage (fallback ketika Cloudinary tidak dikonfigurasi) ───────
+# ── Local file storage (fallback when Cloudinary is not configured) ───────────
 _LOCAL_FILES_DIR = pathlib.Path(__file__).parent / "local_files"
 _LOCAL_FILES_DIR.mkdir(exist_ok=True)
 app.mount("/local", StaticFiles(directory=str(_LOCAL_FILES_DIR)), name="local_files")
@@ -158,10 +159,8 @@ app.mount("/local", StaticFiles(directory=str(_LOCAL_FILES_DIR)), name="local_fi
 
 @app.on_event("startup")
 async def startup_event():
-    # Init admin DB (creates tables + seeds default PIN if first run)
     await admin_db.init_db()
     logger.info("Admin DB initialised at %s", admin_db.DB_PATH)
-
     logger.info("Starting YouTube Music API on port %s", settings.api_port)
     logger.info("Redis enabled: %s", settings.redis_enabled)
     logger.info("Cloudinary accounts: %d", len(settings.cloudinary_accounts))
